@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 from collections.abc import Iterable
 from importlib import import_module
 from typing import Any, Awaitable, Callable, List, Optional, Type, Union, cast
+from asyncio import Condition
 
 from .abc import AbstractAccessLogger
 from .helpers import all_tasks
@@ -275,7 +276,6 @@ try:
 except ImportError:  # pragma: no cover
     SSLContext = Any  # type: ignore
 
-
 async def _run_app(app: Union[Application, Awaitable[Application]], *,
                    host: Optional[str]=None,
                    port: Optional[int]=None,
@@ -290,7 +290,8 @@ async def _run_app(app: Union[Application, Awaitable[Application]], *,
                    access_log: Optional[logging.Logger]=access_logger,
                    handle_signals: bool=True,
                    reuse_address: Optional[bool]=None,
-                   reuse_port: Optional[bool]=None) -> None:
+                   reuse_port: Optional[bool]=None,
+                   abort_condition: Optional[Condition]=None) -> None:
     # A internal functio to actually do all dirty job for application running
     if asyncio.iscoroutine(app):
         app = await app  # type: ignore
@@ -303,6 +304,7 @@ async def _run_app(app: Union[Application, Awaitable[Application]], *,
                        access_log=access_log)
 
     await runner.setup()
+
 
     sites = []  # type: List[BaseSite]
 
@@ -362,8 +364,14 @@ async def _run_app(app: Union[Application, Awaitable[Application]], *,
             names = sorted(str(s.name) for s in runner.sites)
             print("======== Running on {} ========\n"
                   "(Press CTRL+C to quit)".format(', '.join(names)))
-        while True:
-            await asyncio.sleep(3600)  # sleep forever by 1 hour intervals
+
+        if abort_condition is not None:
+            async with abort_condition:
+                await abort_condition.wait()
+                raise GracefulExit
+        else:
+            while True:
+                await asyncio.sleep(3600)  # sleep forever by 1 hour intervals
     finally:
         await runner.cleanup()
 
@@ -404,7 +412,8 @@ def run_app(app: Union[Application, Awaitable[Application]], *,
             access_log: Optional[logging.Logger]=access_logger,
             handle_signals: bool=True,
             reuse_address: Optional[bool]=None,
-            reuse_port: Optional[bool]=None) -> None:
+            reuse_port: Optional[bool]=None,
+            abort_condition: Optional[Condition]=None) -> None:
     """Run an app locally"""
     loop = asyncio.get_event_loop()
 
@@ -430,7 +439,8 @@ def run_app(app: Union[Application, Awaitable[Application]], *,
                                          access_log=access_log,
                                          handle_signals=handle_signals,
                                          reuse_address=reuse_address,
-                                         reuse_port=reuse_port))
+                                         reuse_port=reuse_port,
+                                         abort_condition=abort_condition))
     except (GracefulExit, KeyboardInterrupt):  # pragma: no cover
         pass
     finally:
